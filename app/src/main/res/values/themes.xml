@@ -1,8 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Системная тема на время запуска. Настоящую тему рисует Compose (FastikVpnTheme).
-         Родитель из платформы Android, чтобы не тянуть XML-библиотеку material. -->
+
+    <!-- Основная системная тема окна (после заставки).
+         Настоящее оформление рисует Compose (FastikVpnTheme). -->
     <style name="Theme.FastikVPN" parent="android:Theme.Material.NoActionBar" />
+
+    <!-- Стартовая тема: действует только пока показывается заставка.
+         parent="Theme.SplashScreen" приходит из библиотеки core-splashscreen. -->
+    <style name="Theme.FastikVPN.Starting" parent="Theme.SplashScreen">
+        <!-- Тёмный фон заставки -->
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <!-- Иконка по центру заставки (пока иконка приложения) -->
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <!-- Тема, на которую Android переключится после заставки -->
+        <item name="postSplashScreenTheme">@style/Theme.FastikVPN</item>
+    </style>
+
 </resources>
 
 

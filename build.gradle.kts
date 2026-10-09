@@ -1,5 +1,4 @@
 // Корневой файл сборки. Здесь только ОБЪЯВЛЯЮТСЯ плагины (apply false),
-// а подключаются они уже в модуле app.
 plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.android) apply false

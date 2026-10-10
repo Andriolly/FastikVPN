@@ -43,7 +43,6 @@ object Dimens {
     val EnterButtonRadius = fromDesign(40)
 
     // --- Карточка IP ---
-    val IpCardWidth = fromDesign(676)
     val IpCardHeight = fromDesign(243)
     val IpCardRadius = fromDesign(26)
     val IpIconWidth = fromDesign(178)
@@ -56,4 +55,23 @@ object Dimens {
     val SpacingL = 24.dp
     val SpacingXl = 32.dp
     val ScreenPadding = 20.dp
+
+    // --- Блок "карточка IP + пинг" ---
+    // Важно: этот блок стоит в самом конце объекта. Размеры считаются через другие
+    // значения (BottomBarWidth, SpacingS), а Kotlin создаёт свойства по порядку.
+    // Если поставить блок выше, эти значения ещё будут нулевыми и получится ноль.
+
+    // Зазор между карточкой IP и плашкой пинга
+    val IpPingGap = SpacingS
+
+    // Карточке IP отдаём 56% ширины, остальное достанется пингу.
+    // Умножение Dp на число даёт новый Dp
+    val IpCardWidth = (BottomBarWidth - IpPingGap) * 0.56f
+
+    // Ширина пинга: всё, что осталось от ширины меню после карточки и зазора.
+    // В сумме карточка + зазор + пинг всегда равны ширине нижнего меню
+    val PingBadgeWidth = BottomBarWidth - IpPingGap - IpCardWidth
+
+    // Размер маленьких иконок-действий (стрелка, обновление пинга)
+    val ActionIconSize = 20.dp
 }

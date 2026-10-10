@@ -16,4 +16,28 @@
     <string name="stub_home">Главный экран</string>
     <string name="stub_login">Экран входа</string>
     <string name="stub_settings">Экран настроек</string>
+
+    <!-- Подписи под кнопкой подключения -->
+    <string name="status_disconnected">Отключено</string>
+    <string name="status_connecting">Подключение…</string>
+    <string name="status_connected">Подключено</string>
+
+    <!-- Карточка с IP-адресом -->
+    <string name="ip_label">Ваш IP:</string>
+    <!-- %1$d - сюда подставится число, например 42 -->
+    <string name="ping_value">Пинг: %1$d мс</string>
+    <string name="ping_unknown">Пинг: —</string>
+
+    <!-- Подпись кнопки для программ чтения с экрана -->
+    <string name="cd_connect_button">Кнопка подключения VPN</string>
+
+    <!-- Состояния загрузки IP -->
+    <string name="ip_loading">определяем…</string>
+    <string name="ip_error">не удалось определить</string>
+
+    <!-- Пока идёт измерение пинга -->
+    <string name="ping_loading">Пинг: …</string>
+
+    <!-- Подпись значка обновления пинга для программ чтения с экрана -->
+    <string name="cd_refresh_ping">Обновить пинг</string>
 </resources>

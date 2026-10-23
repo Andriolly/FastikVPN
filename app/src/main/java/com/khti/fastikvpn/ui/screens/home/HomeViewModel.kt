@@ -38,6 +38,9 @@ class HomeViewModel @Inject constructor(
 
     // Нажали на большую кнопку
     fun onConnectClick() {
+        // Защита в логике: даже если кнопку нажали каким-то образом, без входа ничего не делаем
+        if (!_uiState.value.isAuthorized) return
+
         when (_uiState.value.connectionState) {
             ConnectionState.DISCONNECTED -> connect()
             ConnectionState.CONNECTED -> disconnect()

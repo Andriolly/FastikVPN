@@ -22,5 +22,9 @@ data class HomeUiState(
     val isPingLoading: Boolean = false,
 
     // Показана ли плашка с пингом справа от карточки IP
-    val isPingVisible: Boolean = false
+    val isPingVisible: Boolean = false,
+
+    // Вошёл ли пользователь. Пока всегда true, позже подставим настоящую проверку.
+    // Без входа кнопка подключения будет серой и неактивной
+    val isAuthorized: Boolean = true
 )

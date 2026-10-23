@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+
 
 plugins {
     alias(libs.plugins.android.application)
@@ -6,6 +8,14 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+}
+
+// Читаем файл local.properties. В нём лежат секреты, которые нельзя отправлять в Git.
+// Блок стоит ПОСЛЕ plugins { }: до него в Gradle разрешены только import и несколько служебных блоков
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    // Файла может не быть (например, на чужом компьютере), поэтому проверяем
+    if (file.exists()) file.inputStream().use { load(it) }
 }
 
 android {
@@ -19,6 +29,13 @@ android {
         versionCode = 10002
         versionName = "1.0.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Тестовая ссылка попадает в класс BuildConfig как строковая константа.
+        // Кавычки и слэши экранируем, иначе они сломают сгенерированный код.
+        val testLink = localProperties.getProperty("VLESS_TEST_LINK", "")
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        buildConfigField("String", "VLESS_TEST_LINK", "\"$testLink\"")
     }
 
     buildTypes {
@@ -39,6 +56,9 @@ android {
     // Включаем Jetpack Compose в проекте
     buildFeatures {
         compose = true
+
+        // Без этой строки класс BuildConfig не создаётся
+        buildConfig = true
     }
 }
 
@@ -79,4 +99,11 @@ dependencies {
 
     // Системная заставка: держит экран, пока не загрузится тема (убирает мигание)
     implementation(libs.androidx.core.splashscreen)
+
+    // Ядро Xray, собранное под Android (положили файл в app/libs вручную)
+    implementation(files("libs/libv2ray.aar"))
+
+    // Настоящая библиотека JSON для юнит-тестов: в тестах на компьютере
+    // версия из Android недоступна. Версию при необходимости подскажет студия
+    testImplementation("org.json:json:20240303")
 }

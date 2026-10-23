@@ -64,7 +64,8 @@ private fun HomeContent(
         ) {
             VpnConnectButton(
                 connectionState = state.connectionState,
-                onClick = onConnectClick
+                onClick = onConnectClick,
+                enabled = state.isAuthorized
             )
 
             Spacer(modifier = Modifier.height(Dimens.SpacingL))

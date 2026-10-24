@@ -28,13 +28,22 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
-    // Следим за состоянием: при каждом изменении экран перерисуется
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // Функция "запросить разрешения и подключиться". Когда все разрешения получены,
+    // вызывается viewModel.onConnectClick (включение VPN)
+    val requestConnect = rememberVpnPermissionRequest(onReady = viewModel::onConnectClick)
 
     HomeContent(
         state = state,
-        // :: - ссылка на функцию, короткая запись вместо { viewModel.onConnectClick() }
-        onConnectClick = viewModel::onConnectClick,
+        onConnectClick = {
+            if (state.connectionState == ConnectionState.DISCONNECTED) {
+                // Включение: сначала разрешения. Отключению разрешения не нужны
+                requestConnect()
+            } else {
+                viewModel.onConnectClick()
+            }
+        },
         onIpCardClick = viewModel::onIpCardClick,
         onPingRefreshClick = viewModel::onPingRefreshClick,
         modifier = modifier
@@ -42,8 +51,6 @@ fun HomeScreen(
 }
 
 // Версия "без памяти": только рисует то, что ей передали.
-// Такую функцию легко проверять и показывать в превью, ей не нужна ViewModel.
-
 @Composable
 private fun HomeContent(
     state: HomeUiState,
@@ -65,6 +72,7 @@ private fun HomeContent(
             VpnConnectButton(
                 connectionState = state.connectionState,
                 onClick = onConnectClick,
+                // Без входа кнопка серая и неактивная
                 enabled = state.isAuthorized
             )
 
@@ -73,9 +81,7 @@ private fun HomeContent(
             ConnectionStatusText(connectionState = state.connectionState)
         }
 
-        // Нижняя часть: блок IP и пинг.
-        // align(CenterHorizontally) ставит его по центру, как и нижнее меню,
-        // а так как ширины у них одинаковые, левый и правый края совпадают
+        // Нижняя часть: блок IP и пинг по центру, как нижнее меню
         IpInfoRow(
             ipAddress = state.ipAddress,
             isIpLoading = state.isIpLoading,

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.khti.fastikvpn.core.model.ConnectionState
 import com.khti.fastikvpn.domain.repository.IpRepository
+import com.khti.fastikvpn.vpn.VpnController
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -16,35 +17,40 @@ import javax.inject.Inject
 import kotlin.random.Random
 
 // ViewModel главного экрана.
-// IP берётся из интернета по-настоящему, а вот подключение и пинг пока ИМИТАЦИЯ.
-// Репозиторий IP Hilt передаёт нам сам через конструктор.
+// Теперь подключение НАСТОЯЩЕЕ: мы просим VpnController включить сервис
+// и следим за его состоянием. А вот пинг пока ИМИТАЦИЯ.
 @HiltViewModel
 class HomeViewModel @Inject constructor(
-    private val ipRepository: IpRepository
+    private val ipRepository: IpRepository,
+    // Пульт управления VPN. Hilt подставляет его сам
+    private val vpnController: VpnController
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
-    // Ссылки на запущенные дела. Они нужны, чтобы старое дело можно было отменить,
-    // когда запускаем новое. Иначе результаты двух запросов перемешаются.
     private var ipJob: Job? = null
     private var pingJob: Job? = null
 
-    // init выполняется сразу при создании ViewModel: узнаём IP при запуске экрана
     init {
         refreshIp()
+
+        // Подписываемся на табло состояния VPN. collect работает всё время жизни ViewModel:
+        // при любом изменении вызывается onVpnStateChanged
+        viewModelScope.launch {
+            vpnController.state.collect { newState -> onVpnStateChanged(newState) }
+        }
     }
 
-    // Нажали на большую кнопку
+    // Нажали на большую кнопку (разрешения к этому моменту уже получены экраном)
     fun onConnectClick() {
-        // Защита в логике: даже если кнопку нажали каким-то образом, без входа ничего не делаем
+        // Без входа подключаться нельзя. Защита стоит и здесь, а не только в экране
         if (!_uiState.value.isAuthorized) return
 
         when (_uiState.value.connectionState) {
-            ConnectionState.DISCONNECTED -> connect()
-            ConnectionState.CONNECTED -> disconnect()
-            // Во время подключения нажатия игнорируем
+            ConnectionState.DISCONNECTED -> vpnController.connect()
+            ConnectionState.CONNECTED -> vpnController.disconnect()
+            // Пока идёт подключение, повторные нажатия игнорируем
             ConnectionState.CONNECTING -> Unit
         }
     }
@@ -57,72 +63,57 @@ class HomeViewModel @Inject constructor(
     // Нажали на значок обновления пинга
     fun onPingRefreshClick() {
         val state = _uiState.value
-        // Измерять имеет смысл, только когда VPN включён и измерение ещё не идёт
         if (state.connectionState == ConnectionState.CONNECTED && !state.isPingLoading) {
             measurePing()
         }
     }
 
-    private fun connect() {
-        _uiState.update { it.copy(connectionState = ConnectionState.CONNECTING) }
+    // Реакция на изменение состояния VPN. Состояние приходит из сервиса, а не придумывается здесь.
+    // Благодаря этому, если VPN выключили кнопкой в уведомлении, кнопка на экране погаснет сама.
+    private fun onVpnStateChanged(newState: ConnectionState) {
+        val oldState = _uiState.value.connectionState
+        _uiState.update { it.copy(connectionState = newState) }
 
-        viewModelScope.launch {
-            // ИМИТАЦИЯ: делаем вид, что соединяемся с сервером
-            delay(CONNECT_DELAY_MS)
-
-            _uiState.update { it.copy(connectionState = ConnectionState.CONNECTED) }
-
-            // После подключения заново узнаём IP и замеряем пинг
-            refreshIp()
-            measurePing()
+        when {
+            // VPN только что включился
+            newState == ConnectionState.CONNECTED && oldState != ConnectionState.CONNECTED -> {
+                refreshIp()
+                measurePing()
+            }
+            // VPN только что выключился
+            newState == ConnectionState.DISCONNECTED && oldState != ConnectionState.DISCONNECTED -> {
+                pingJob?.cancel()
+                _uiState.update { it.copy(pingMs = null, isPingLoading = false) }
+                refreshIp()
+            }
         }
-    }
-
-    private fun disconnect() {
-        // Измерение пинга больше не нужно, отменяем его
-        pingJob?.cancel()
-
-        _uiState.update {
-            it.copy(
-                connectionState = ConnectionState.DISCONNECTED,
-                pingMs = null,
-                isPingLoading = false
-            )
-        }
-
-        // После отключения снова узнаём IP
-        refreshIp()
     }
 
     // Узнаём внешний IP из интернета
     private fun refreshIp() {
-        // Если предыдущий запрос ещё идёт, отменяем его
         ipJob?.cancel()
         _uiState.update { it.copy(isIpLoading = true) }
 
         ipJob = viewModelScope.launch {
             val ip = ipRepository.getPublicIp()
-            // Если ip == null, на экране появится подпись "не удалось определить"
             _uiState.update { it.copy(ipAddress = ip, isIpLoading = false) }
         }
     }
 
     // ИМИТАЦИЯ измерения пинга: пауза случайной длины и случайное число.
-    // Настоящее измерение тоже не мгновенное: пакет уходит, потом приходит ответ.
+    // Настоящее измерение появится на этапе D.
     private fun measurePing() {
         pingJob?.cancel()
         _uiState.update { it.copy(isPingLoading = true) }
 
         pingJob = viewModelScope.launch {
             delay(Random.nextLong(PING_MIN_DELAY_MS, PING_MAX_DELAY_MS))
-            // nextInt берёт число из диапазона, верхняя граница не включается, поэтому +1
             val ping = Random.nextInt(PING_MIN_MS, PING_MAX_MS + 1)
             _uiState.update { it.copy(pingMs = ping, isPingLoading = false) }
         }
     }
 
     private companion object {
-        const val CONNECT_DELAY_MS = 800L
         const val PING_MIN_MS = 30
         const val PING_MAX_MS = 150
         const val PING_MIN_DELAY_MS = 400L

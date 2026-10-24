@@ -40,4 +40,10 @@
 
     <!-- Подпись значка обновления пинга для программ чтения с экрана -->
     <string name="cd_refresh_ping">Обновить пинг</string>
+
+    <!-- Уведомление VPN -->
+    <string name="vpn_channel_name">Состояние VPN</string>
+    <string name="vpn_notification_title">FastikVPN</string>
+    <string name="vpn_notification_text">VPN-туннель включён</string>
+    <string name="vpn_notification_stop">Отключить</string>
 </resources>

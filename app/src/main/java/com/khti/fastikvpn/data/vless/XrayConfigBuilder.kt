@@ -19,7 +19,10 @@ class XrayConfigBuilder @Inject constructor() {
         val root = JSONObject()
 
         // Уровень журнала: только предупреждения и ошибки
-        root.put("log", JSONObject().put("loglevel", "warning"))
+        // Журнал подключений отключаем: он засоряет Logcat и раскрывает адреса,
+        // к которым обращается пользователь. Ошибки и предупреждения остаются
+        root.put("log", JSONObject().put("access", "none").put("loglevel", "warning"))
+        //root.put("log", JSONObject().put("loglevel", "warning"))
 
         // Счётчики трафика. Нужны для статистики на экране (этап D)
         root.put("stats", JSONObject())

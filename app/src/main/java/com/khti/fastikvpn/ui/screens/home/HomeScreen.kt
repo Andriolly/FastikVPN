@@ -16,8 +16,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.khti.fastikvpn.core.constants.Dimens
 import com.khti.fastikvpn.core.model.ConnectionState
 import com.khti.fastikvpn.ui.screens.home.components.ConnectionStatusText
+import com.khti.fastikvpn.ui.screens.home.components.ErrorMessage
 import com.khti.fastikvpn.ui.screens.home.components.IpInfoRow
 import com.khti.fastikvpn.ui.screens.home.components.VpnConnectButton
+import com.khti.fastikvpn.ui.screens.home.components.StatusDetails
 
 // Главный экран, версия "с памятью": получает ViewModel и подписывается на её состояние.
 // Сам ничего не рисует, а передаёт данные в HomeContent.
@@ -79,6 +81,13 @@ private fun HomeContent(
             Spacer(modifier = Modifier.height(Dimens.SpacingL))
 
             ConnectionStatusText(connectionState = state.connectionState)
+
+            // Общее место под статусом: ошибка или статистика сессии
+            StatusDetails(
+                error = state.error,
+                session = state.session,
+                isConnected = state.connectionState == ConnectionState.CONNECTED
+            )
         }
 
         // Нижняя часть: блок IP и пинг по центру, как нижнее меню

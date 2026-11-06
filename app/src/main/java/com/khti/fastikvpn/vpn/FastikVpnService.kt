@@ -23,6 +23,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import javax.inject.Inject
+import com.khti.fastikvpn.core.model.VpnError
+import android.os.SystemClock
+import com.khti.fastikvpn.core.model.SessionStats
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 // Сам VPN-сервис. Его задачи:
 // 1) создать виртуальную сетевую карту (TUN);
@@ -57,6 +63,9 @@ class FastikVpnService : VpnService() {
     private var startJob: Job? = null
     private var stopJob: Job? = null
 
+    // Задача, которая раз в секунду собирает статистику трафика
+    private var statsJob: Job? = null
+
     // Открытая виртуальная карта. Пока она не null, туннель создан.
     // ParcelFileDescriptor - обёртка над файловым дескриптором (номером открытого "файла").
     private var tunInterface: ParcelFileDescriptor? = null
@@ -82,6 +91,8 @@ class FastikVpnService : VpnService() {
         // Уже включаемся или включены: повторная команда ничего не меняет
         if (startJob?.isActive == true || tunInterface != null) return
 
+        // Старая ошибка больше не актуальна
+        statusHolder.clearError()
         statusHolder.update(ConnectionState.CONNECTING)
 
         // Правило Android: после startForegroundService сервис обязан в течение ~5 секунд
@@ -90,35 +101,57 @@ class FastikVpnService : VpnService() {
 
         startJob = serviceScope.launch {
             try {
-                // Шаг 1. Берём параметры сервера и собираем из них JSON для ядра.
-                // getOrThrow бросит исключение, если ссылка не задана или неверна
-                val vless = vlessSource.getConfig().getOrThrow()
+                // Шаг 1. Берём параметры сервера. Если не получилось, это ошибка ссылки.
+                // getOrElse выполняет блок только при неудаче и позволяет бросить своё исключение
+                val vless = vlessSource.getConfig().getOrElse {
+                    throw VpnStartException(VpnError.INVALID_SERVER_LINK, it)
+                }
                 activeConfig = vless
-                val configJson = configBuilder.build(vless)
 
-                // Шаг 2. Просим систему создать виртуальную карту.
-                // null означает, что система отказала (например, пропало разрешение)
-                val tun = createTunnelBuilder().establish()
-                    ?: throw IllegalStateException("Система не создала туннель")
-                tunInterface = tun
-
-                // Шаг 3. Запускаем ядро в фоновом потоке, чтобы не замораживать приложение.
-                // Ядру отдаём тот же номер, который держим мы, без копии. Владелец номера
-                // остаётся сервис: ядро только читает из него, а закрываем мы сами
-                // после остановки ядра. Тогда, когда мы закроем карту, она реально выключится
-                withContext(Dispatchers.IO) {
-                    xrayCore.start(configJson, tun.fd)
+                // Шаг 2. Собираем JSON. Сборщик может отказаться (например, неподдерживаемый
+                // транспорт), это тоже проблема с параметрами сервера
+                val configJson = runCatching { configBuilder.build(vless) }.getOrElse {
+                    throw VpnStartException(VpnError.INVALID_SERVER_LINK, it)
                 }
 
-                // Всё получилось
+                // Шаг 3. Просим систему создать виртуальную карту.
+                // null означает отказ (например, пропало разрешение), исключение - сбой системы
+                val tun = runCatching { createTunnelBuilder().establish() }.getOrNull()
+                    ?: throw VpnStartException(VpnError.TUNNEL_NOT_CREATED)
+                tunInterface = tun
+
+                // Шаг 4. Запускаем ядро в фоновом потоке.
+                // Ядру отдаём тот же номер, который держим мы, без копии: владелец номера
+                // остаётся сервис, и закрываем его тоже мы
+                try {
+                    withContext(Dispatchers.IO) {
+                        xrayCore.start(configJson, tun.fd)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    throw VpnStartException(VpnError.CORE_START_FAILED, e)
+                }
+
+                // Всё получилось. Сначала запоминаем адрес сервера,
+                // потом меняем состояние: экран, увидев CONNECTED, сразу найдёт адрес
+                statusHolder.setServerAddress(vless.address)
                 statusHolder.update(ConnectionState.CONNECTED)
                 Log.i(TAG, "VPN включён")
+                startStatsLoop()
             } catch (e: CancellationException) {
                 // Нас отменили (пользователь нажал "выключить"): пробрасываем дальше как есть
                 throw e
             } catch (e: Exception) {
-                // Любая другая ошибка: пишем в журнал без секретов и выключаемся
-                Log.e(TAG, "Не удалось включить VPN: ${redact(e.message)}")
+                // Определяем код ошибки: если это наше исключение, берём из него, иначе UNKNOWN.
+                // "as?" - безопасное приведение типа, вернёт null, если тип не подходит
+                val error = (e as? VpnStartException)?.error ?: VpnError.UNKNOWN
+
+                // В журнал пишем без секретов: причина может цитировать UUID или ключ
+                Log.e(TAG, "Не удалось включить VPN (${error.name}): ${redact(e.cause?.message ?: e.message)}")
+
+                // Сообщаем экрану и выключаемся
+                statusHolder.reportError(error)
                 stopTunnel()
             }
         }
@@ -183,6 +216,11 @@ class FastikVpnService : VpnService() {
         startJob = null
 
         stopJob = serviceScope.launch {
+            // Сначала останавливаем опрос статистики и ДОЖИДАЕМСЯ его окончания.
+            // Иначе мы могли бы спросить счётчики у ядра в тот момент, когда оно останавливается
+            statsJob?.cancelAndJoin()
+            statsJob = null
+
             // Останавливаем ядро в фоновом потоке. Если запуск ещё не закончился,
             // метод stop подождёт его завершения (так устроен @Synchronized)
             withContext(Dispatchers.IO) { xrayCore.stop() }
@@ -191,11 +229,58 @@ class FastikVpnService : VpnService() {
             closeTunnel()
             Log.i(TAG, "Остановка: карта закрыта")
             activeConfig = null
+            statusHolder.setServerAddress(null)
+            statusHolder.resetSession()
             statusHolder.update(ConnectionState.DISCONNECTED)
 
             // Убираем уведомление и завершаем сам сервис
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
+        }
+    }
+
+    // Раз в секунду спрашивает у ядра, сколько данных прошло, и публикует статистику.
+    // Ядро отдаёт только приращение с прошлого запроса, поэтому итоги складываем сами.
+    private fun startStatsLoop() {
+        statsJob?.cancel()
+
+        statsJob = serviceScope.launch {
+            // elapsedRealtime - монотонные часы: идут только вперёд и не зависят от того,
+            // что пользователь поменял время на телефоне
+            val startedAt = SystemClock.elapsedRealtime()
+            var lastTick = startedAt
+            var totalUpload = 0L
+            var totalDownload = 0L
+
+            // isActive становится false, когда задачу отменили
+            while (isActive) {
+                delay(STATS_INTERVAL_MS)
+
+                val now = SystemClock.elapsedRealtime()
+
+                // Опрос ядра - обращение в нативный код, делаем его в фоновом потоке
+                val raw = withContext(Dispatchers.IO) { xrayCore.queryTraffic() }
+                val delta = TrafficStatsParser.parse(raw)
+
+                // Реально прошедшее время между опросами. Опрос мог задержаться, поэтому
+                // делить на "ровно секунду" неточно. coerceAtLeast(1) защищает от деления на ноль
+                val intervalMs = (now - lastTick).coerceAtLeast(1)
+                lastTick = now
+
+                totalUpload += delta.uploadBytes
+                totalDownload += delta.downloadBytes
+
+                statusHolder.updateSession(
+                    SessionStats(
+                        uploadBytes = totalUpload,
+                        downloadBytes = totalDownload,
+                        // Скорость = приращение, пересчитанное на секунду
+                        uploadSpeed = delta.uploadBytes * 1000 / intervalMs,
+                        downloadSpeed = delta.downloadBytes * 1000 / intervalMs,
+                        elapsedSeconds = (now - startedAt) / 1000
+                    )
+                )
+            }
         }
     }
 
@@ -234,6 +319,8 @@ class FastikVpnService : VpnService() {
         serviceScope.cancel()
         xrayCore.stop()
         closeTunnel()
+        statusHolder.setServerAddress(null)
+        statusHolder.resetSession()
         statusHolder.update(ConnectionState.DISCONNECTED)
         Log.i(TAG, "Сервис уничтожен")
         super.onDestroy()
@@ -259,6 +346,9 @@ class FastikVpnService : VpnService() {
 
         // Исключать ли наше приложение из туннеля
         private const val EXCLUDE_SELF = true
+
+        // Как часто собираем статистику
+        private const val STATS_INTERVAL_MS = 1_000L
 
         // Готовая команда "включить"
         fun startIntent(context: Context): Intent =

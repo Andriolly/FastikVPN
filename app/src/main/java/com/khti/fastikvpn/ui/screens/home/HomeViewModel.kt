@@ -3,6 +3,7 @@ package com.khti.fastikvpn.ui.screens.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.khti.fastikvpn.core.model.ConnectionState
+import com.khti.fastikvpn.core.model.VpnError
 import com.khti.fastikvpn.domain.repository.IpRepository
 import com.khti.fastikvpn.vpn.VpnController
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -14,11 +15,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-import kotlin.random.Random
 
 // ViewModel главного экрана.
-// Теперь подключение НАСТОЯЩЕЕ: мы просим VpnController включить сервис
-// и следим за его состоянием. А вот пинг пока ИМИТАЦИЯ.
+// Подключение, пинг и адрес сервера теперь НАСТОЯЩИЕ. Раньше пинг был случайным числом.
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val ipRepository: IpRepository,
@@ -29,16 +28,31 @@ class HomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
+    // Ссылки на запущенные дела, чтобы старое дело можно было отменить при запуске нового
     private var ipJob: Job? = null
     private var pingJob: Job? = null
+    private var errorJob: Job? = null
 
     init {
         refreshIp()
 
-        // Подписываемся на табло состояния VPN. collect работает всё время жизни ViewModel:
-        // при любом изменении вызывается onVpnStateChanged
+        // Следим за состоянием VPN
         viewModelScope.launch {
             vpnController.state.collect { newState -> onVpnStateChanged(newState) }
+        }
+
+        // Следим за ошибками. Когда на табло появилась ошибка, показываем её
+        viewModelScope.launch {
+            vpnController.error.collect { error ->
+                if (error != null) showError(error)
+            }
+        }
+
+        // Следим за статистикой сессии. Данные собирает сервис, мы только показываем
+        viewModelScope.launch {
+            vpnController.sessionStats.collect { stats ->
+                _uiState.update { it.copy(session = stats) }
+            }
         }
     }
 
@@ -69,7 +83,6 @@ class HomeViewModel @Inject constructor(
     }
 
     // Реакция на изменение состояния VPN. Состояние приходит из сервиса, а не придумывается здесь.
-    // Благодаря этому, если VPN выключили кнопкой в уведомлении, кнопка на экране погаснет сама.
     private fun onVpnStateChanged(newState: ConnectionState) {
         val oldState = _uiState.value.connectionState
         _uiState.update { it.copy(connectionState = newState) }
@@ -89,34 +102,60 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    // Узнаём внешний IP из интернета
+    // Определяем, какой адрес показать на карточке.
+    // VPN включён: показываем адрес сервера. Своё приложение мы исключили из туннеля,
+    // поэтому запрос "какой у меня IP" из приложения показал бы адрес телефона, а не сервера.
+    // VPN выключен: спрашиваем настоящий IP телефона в интернете.
     private fun refreshIp() {
         ipJob?.cancel()
-        _uiState.update { it.copy(isIpLoading = true) }
 
+        val serverAddress = vpnController.serverAddress.value
+        if (_uiState.value.connectionState == ConnectionState.CONNECTED && serverAddress != null) {
+            _uiState.update { it.copy(ipAddress = serverAddress, isIpLoading = false) }
+            return
+        }
+
+        _uiState.update { it.copy(isIpLoading = true) }
         ipJob = viewModelScope.launch {
             val ip = ipRepository.getPublicIp()
             _uiState.update { it.copy(ipAddress = ip, isIpLoading = false) }
         }
     }
 
-    // ИМИТАЦИЯ измерения пинга: пауза случайной длины и случайное число.
-    // Настоящее измерение появится на этапе D.
+    // НАСТОЯЩИЙ замер пинга через ядро.
     private fun measurePing() {
         pingJob?.cancel()
         _uiState.update { it.copy(isPingLoading = true) }
 
         pingJob = viewModelScope.launch {
-            delay(Random.nextLong(PING_MIN_DELAY_MS, PING_MAX_DELAY_MS))
-            val ping = Random.nextInt(PING_MIN_MS, PING_MAX_MS + 1)
-            _uiState.update { it.copy(pingMs = ping, isPingLoading = false) }
+            // Result хранит либо число, либо ошибку. Обрабатываем оба случая
+            vpnController.measurePing()
+                .onSuccess { ms ->
+                    _uiState.update { it.copy(pingMs = ms, isPingLoading = false) }
+                }
+                .onFailure {
+                    // Замер не удался: значит, сервер не отвечает
+                    _uiState.update { it.copy(pingMs = null, isPingLoading = false) }
+                    showError(VpnError.SERVER_UNREACHABLE)
+                }
+        }
+    }
+
+    // Показывает ошибку на экране и через несколько секунд убирает её
+    private fun showError(error: VpnError) {
+        errorJob?.cancel()
+        _uiState.update { it.copy(error = error) }
+
+        errorJob = viewModelScope.launch {
+            delay(ERROR_SHOW_MS)
+            _uiState.update { it.copy(error = null) }
+            // Стираем ошибку и на общем табло, чтобы она не показалась снова
+            vpnController.clearError()
         }
     }
 
     private companion object {
-        const val PING_MIN_MS = 30
-        const val PING_MAX_MS = 150
-        const val PING_MIN_DELAY_MS = 400L
-        const val PING_MAX_DELAY_MS = 1200L
+        // Сколько секунд сообщение об ошибке висит на экране
+        const val ERROR_SHOW_MS = 6_000L
     }
 }

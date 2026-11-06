@@ -46,4 +46,16 @@
     <string name="vpn_notification_title">FastikVPN</string>
     <string name="vpn_notification_text">VPN-туннель включён</string>
     <string name="vpn_notification_stop">Отключить</string>
+
+    <!-- Сообщения об ошибках VPN -->
+    <string name="error_invalid_link">Не задана или неверна ссылка сервера</string>
+    <string name="error_tunnel">Не удалось создать защищённое соединение. Проверьте разрешение VPN</string>
+    <string name="error_core">Не удалось запустить ядро. Проверьте параметры сервера</string>
+    <string name="error_server_unreachable">Сервер не отвечает. Проверьте интернет и параметры сервера</string>
+    <string name="error_unknown">Не удалось подключиться</string>
+
+    <!-- Статистика сессии. %1$s и %2$s заменяются на готовые строки вроде "1,5 МБ/с" -->
+    <string name="session_speed">↓ %1$s   ↑ %2$s</string>
+    <string name="session_total">Всего: ↓ %1$s   ↑ %2$s</string>
+
 </resources>

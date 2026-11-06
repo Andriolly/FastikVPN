@@ -1,6 +1,8 @@
 package com.khti.fastikvpn.ui.screens.home
 
 import com.khti.fastikvpn.core.model.ConnectionState
+import com.khti.fastikvpn.core.model.SessionStats
+import com.khti.fastikvpn.core.model.VpnError
 
 // Всё, что нужно главному экрану, чтобы нарисоваться, собрано в одном объекте.
 // Экран ничего не хранит сам, он просто показывает этот объект.
@@ -26,5 +28,11 @@ data class HomeUiState(
 
     // Вошёл ли пользователь. Пока всегда true, позже подставим настоящую проверку.
     // Без входа кнопка подключения будет серой и неактивной
-    val isAuthorized: Boolean = true
+    val isAuthorized: Boolean = true,
+
+    // Текущая ошибка для показа пользователю. null, если ошибок нет
+    val error: VpnError? = null,
+
+    // Статистика текущей сессии: объём, скорость, время
+    val session: SessionStats = SessionStats.EMPTY
 )

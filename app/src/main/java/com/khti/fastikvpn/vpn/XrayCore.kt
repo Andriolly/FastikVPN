@@ -7,10 +7,15 @@ import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.Libv2ray
 import javax.inject.Inject
+import javax.inject.Singleton
 
 // Обёртка над ядром Xray. Все обращения к библиотеке libv2ray собраны в этом классе.
-// Остальной код приложения про библиотеку ничего не знает и просто вызывает start и stop.
-// Если библиотеку когда-нибудь заменят, править придётся только этот файл.
+// Остальной код приложения про библиотеку ничего не знает.
+//
+// @Singleton: теперь у приложения ровно одно ядро на всех. Раньше ядро жило только
+// внутри сервиса, а пинг запрашивает экран. Чтобы они обращались к одному и тому же ядру,
+// объект должен быть общим.
+@Singleton
 class XrayCore @Inject constructor(
     // Контекст всего приложения, нужен для пути к папке с файлами
     @ApplicationContext private val context: Context
@@ -19,25 +24,20 @@ class XrayCore @Inject constructor(
     // Контроллер запущенного ядра. Пока он не null, ядро работает
     private var controller: CoreController? = null
 
-    // Ядро умеет сообщать нам о своих событиях. Для этого мы даём ему объект с тремя методами.
+    // Объект, через который ядро сообщает нам о своих событиях.
     // Типы Long здесь не случайны: в языке Go это тип int, а gomobile превращает его в Long.
-    // Каждый метод обязан вернуть число, ноль означает "всё хорошо".
     private val callbackHandler = object : CoreCallbackHandler {
 
-        // Ядро запустилось
         override fun startup(): Long {
             Log.i(TAG, "Ядро Xray: запущено")
             return 0
         }
 
-        // Ядро остановилось
         override fun shutdown(): Long {
             Log.i(TAG, "Ядро Xray: остановлено")
             return 0
         }
 
-        // Ядро прислало сообщение о состоянии. code - код, message - текст.
-        // Тип String? с вопросом: библиотека написана не на Kotlin и может передать null
         override fun onEmitStatus(code: Long, message: String?): Long {
             Log.i(TAG, "Ядро Xray: $message")
             return 0
@@ -45,24 +45,14 @@ class XrayCore @Inject constructor(
     }
 
     // Запускает ядро.
-    // configJson - настройки в формате JSON (их собирает XrayConfigBuilder),
-    // tunFd - номер открытого виртуального интерфейса, из которого ядро будет читать пакеты.
-    //
     // @Synchronized: пока один поток выполняет этот метод, остальные ждут.
-    // Благодаря этому остановка не вклинится в середину запуска.
     @Synchronized
     fun start(configJson: String, tunFd: Int) {
-        // Ядро уже запущено: повторный запуск не нужен
         if (controller != null) return
 
-        // Готовим окружение ядра: папка для файлов и ключ шифрования XUDP (пока не нужен).
-        // Вызов безопасно повторять
         Libv2ray.initCoreEnv(context.filesDir.absolutePath, "")
 
-        // Создаём контроллер и передаём ему наш обработчик событий
         val newController = Libv2ray.newCoreController(callbackHandler)
-
-        // Запуск. При ошибке в конфигурации бросит исключение, и мы в controller ничего не запишем
         newController.startLoop(configJson, tunFd)
 
         controller = newController
@@ -72,13 +62,33 @@ class XrayCore @Inject constructor(
     @Synchronized
     fun stop() {
         val current = controller ?: return
-        // Сначала забываем контроллер, чтобы повторная остановка не сработала дважды
         controller = null
         try {
             current.stopLoop()
         } catch (e: Exception) {
             Log.w(TAG, "Ошибка при остановке ядра: ${e.javaClass.simpleName}")
         }
+    }
+
+    // Измеряет задержку: ядро отправляет запрос на указанный адрес ЧЕРЕЗ СЕРВЕР
+    // и возвращает, сколько миллисекунд прошло до ответа.
+    // Бросает исключение, если ядро не запущено или связи нет (ожидание ограничено 12 секундами).
+    //
+    // Метод намеренно БЕЗ @Synchronized: он может ждать до 12 секунд, и за это время
+    // нельзя блокировать остановку ядра. Поэтому синхронизирована только короткая
+    // операция "взять ссылку на контроллер", а само ожидание идёт без блокировки.
+    fun measureDelay(url: String): Long {
+        val current = synchronized(this) { controller }
+            ?: throw IllegalStateException("Ядро не запущено")
+        return current.measureDelay(url)
+    }
+
+    // Спрашивает у ядра счётчики трафика. Возвращает строку, которую разбирает TrafficStatsParser.
+    // ВАЖНО: ядро обнуляет счётчики при каждом чтении, поэтому читать их должен только один
+    // "читатель" (наш сервис). Если ядро не запущено, возвращаем пустую строку
+    fun queryTraffic(): String {
+        val current = synchronized(this) { controller } ?: return ""
+        return current.queryAllOutboundTrafficStats()
     }
 
     private companion object {
